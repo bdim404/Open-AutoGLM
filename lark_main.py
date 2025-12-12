@@ -3,8 +3,7 @@ import json
 import logging
 from typing import Dict
 
-from lark_oapi import Client
-from lark_oapi.event import EventDispatcherHandler, MessageReceiveEvent, CardActionEvent
+import lark_oapi as lark
 
 from phone_agent.config.bot_config import BotConfig
 from phone_agent.interfaces.lark import LarkInterface
@@ -18,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 config = BotConfig()
 
-client = Client.builder() \
+client = lark.Client.builder() \
     .app_id(config.lark_app_id) \
     .app_secret(config.lark_app_secret) \
     .build()
@@ -31,36 +30,27 @@ def check_lark_auth(user_id: str) -> bool:
     return user_id in config.lark_allowed_users
 
 
-class MessageHandler(EventDispatcherHandler):
-    def __init__(self):
-        super().__init__()
-
-    def do(self, event: MessageReceiveEvent) -> None:
-        asyncio.set_event_loop(event_loop)
-        event_loop.run_until_complete(handle_message_event(event))
+def do_p2_im_message_receive_v1(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
+    asyncio.set_event_loop(event_loop)
+    event_loop.run_until_complete(handle_message_event(data))
 
 
-class CardActionHandler(EventDispatcherHandler):
-    def __init__(self):
-        super().__init__()
-
-    def do(self, event: CardActionEvent) -> None:
-        asyncio.set_event_loop(event_loop)
-        event_loop.run_until_complete(handle_card_action_event(event))
-
-
-async def handle_message_event(event: MessageReceiveEvent):
+async def handle_message_event(data: lark.im.v1.P2ImMessageReceiveV1):
     try:
-        sender = event.event.sender
+        event = data.event
+        sender = event.sender
         user_id = sender.sender_id.open_id
+
+        logger.info(f"Received message from user: {user_id}")
 
         if not check_lark_auth(user_id):
             logger.warning(f"Unauthorized access attempt from user {user_id}")
+            logger.warning(f"Please add this user to allowed_users in config: '{user_id}'")
             interface = LarkInterface(client, user_id)
-            await interface.send_message("未授权用户")
+            await interface.send_message(f"未授权用户\n\n请将以下 ID 添加到配置文件的 allowed_users 中：\n{user_id}")
             return
 
-        message = event.event.message
+        message = event.message
         msg_type = message.message_type
 
         if msg_type != "text":
@@ -104,10 +94,16 @@ async def handle_message_event(event: MessageReceiveEvent):
         logger.error(f"Error handling message event: {e}", exc_info=True)
 
 
-async def handle_card_action_event(event: CardActionEvent):
+def do_card_action_event(data: lark.CustomizedEvent) -> None:
+    asyncio.set_event_loop(event_loop)
+    event_loop.run_until_complete(handle_card_action_event(data))
+
+
+async def handle_card_action_event(data: lark.CustomizedEvent):
     try:
-        action = event.event.action
-        value_str = action.value
+        event_data = json.loads(data.event)
+        action = event_data.get("action", {})
+        value_str = action.get("value", "{}")
 
         try:
             value = json.loads(value_str)
@@ -118,7 +114,8 @@ async def handle_card_action_event(event: CardActionEvent):
         msg_id = value.get("msg_id")
         action_type = value.get("action")
 
-        user_id = event.event.operator.open_id
+        operator = event_data.get("operator", {})
+        user_id = operator.get("open_id")
 
         if user_id not in active_tasks:
             logger.warning(f"No active task for user {user_id} when handling card action")
@@ -138,23 +135,25 @@ async def handle_card_action_event(event: CardActionEvent):
 
 
 def main():
-    from lark_oapi.event import EventDispatcher
-
     logger.info("Starting Lark bot with long connection...")
     logger.info(f"App ID: {config.lark_app_id}")
     logger.info(f"Allowed users: {config.lark_allowed_users}")
 
-    event_dispatcher = EventDispatcher.builder(
-        verification_token=config.lark_verification_token,
-        encrypt_key=""
-    ).build()
+    event_handler = lark.EventDispatcherHandler.builder("", "") \
+        .register_p2_im_message_receive_v1(do_p2_im_message_receive_v1) \
+        .register_p1_customized_event("card.action.trigger", do_card_action_event) \
+        .build()
 
-    event_dispatcher.register("im.message.receive_v1", MessageHandler())
-    event_dispatcher.register("card.action.trigger", CardActionHandler())
+    logger.info("Starting WebSocket client...")
 
-    logger.info("Starting event listener...")
+    ws_client = lark.ws.Client(
+        config.lark_app_id,
+        config.lark_app_secret,
+        event_handler=event_handler,
+        log_level=lark.LogLevel.INFO
+    )
 
-    client.ws.start(event_dispatcher)
+    ws_client.start()
 
 
 if __name__ == '__main__':
