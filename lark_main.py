@@ -3,8 +3,8 @@ import json
 import logging
 from typing import Dict
 
-from fastapi import FastAPI, Request
 from lark_oapi import Client
+from lark_oapi.event import EventDispatcherHandler, MessageReceiveEvent, CardActionEvent
 
 from phone_agent.config.bot_config import BotConfig
 from phone_agent.interfaces.lark import LarkInterface
@@ -17,7 +17,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 config = BotConfig()
-app = FastAPI()
 
 client = Client.builder() \
     .app_id(config.lark_app_id) \
@@ -25,139 +24,143 @@ client = Client.builder() \
     .build()
 
 active_tasks: Dict[str, LarkInterface] = {}
+event_loop = asyncio.new_event_loop()
 
 
 def check_lark_auth(user_id: str) -> bool:
     return user_id in config.lark_allowed_users
 
 
-@app.get("/health")
-async def health_check():
-    return {"status": "ok"}
+class MessageHandler(EventDispatcherHandler):
+    def __init__(self):
+        super().__init__()
+
+    def do(self, event: MessageReceiveEvent) -> None:
+        asyncio.set_event_loop(event_loop)
+        event_loop.run_until_complete(handle_message_event(event))
 
 
-@app.post("/webhook/event")
-async def handle_event(request: Request):
-    body = await request.json()
+class CardActionHandler(EventDispatcherHandler):
+    def __init__(self):
+        super().__init__()
 
-    if body.get("type") == "url_verification":
-        logger.info("URL verification challenge received")
-        return {"challenge": body.get("challenge")}
-
-    asyncio.create_task(process_event_async(body))
-    return {"code": 0}
+    def do(self, event: CardActionEvent) -> None:
+        asyncio.set_event_loop(event_loop)
+        event_loop.run_until_complete(handle_card_action_event(event))
 
 
-async def process_event_async(body: dict):
+async def handle_message_event(event: MessageReceiveEvent):
     try:
-        event_type = body.get("header", {}).get("event_type")
+        sender = event.event.sender
+        user_id = sender.sender_id.open_id
 
-        if event_type == "im.message.receive_v1":
-            await handle_message_event(body.get("event", {}))
-        elif event_type == "card.action.trigger":
-            await handle_card_action_event(body.get("event", {}))
-        else:
-            logger.warning(f"Unknown event type: {event_type}")
+        if not check_lark_auth(user_id):
+            logger.warning(f"Unauthorized access attempt from user {user_id}")
+            interface = LarkInterface(client, user_id)
+            await interface.send_message("未授权用户")
+            return
 
-    except Exception as e:
-        logger.error(f"Error processing event: {e}", exc_info=True)
+        message = event.event.message
+        msg_type = message.message_type
 
+        if msg_type != "text":
+            logger.info(f"Ignoring non-text message type: {msg_type}")
+            return
 
-async def handle_message_event(event: dict):
-    sender = event.get("sender", {})
-    user_id = sender.get("sender_id", {}).get("open_id")
+        content = json.loads(message.content)
+        text = content.get("text", "").strip()
 
-    if not check_lark_auth(user_id):
-        logger.warning(f"Unauthorized access attempt from user {user_id}")
-        interface = LarkInterface(client, user_id)
-        await interface.send_message("未授权用户")
-        return
+        if not text:
+            return
 
-    message = event.get("message", {})
-    msg_type = message.get("message_type")
-
-    if msg_type != "text":
-        logger.info(f"Ignoring non-text message type: {msg_type}")
-        return
-
-    content = json.loads(message.get("content", "{}"))
-    text = content.get("text", "").strip()
-
-    if not text:
-        return
-
-    if user_id in active_tasks:
-        interface = LarkInterface(client, user_id)
-        await interface.send_message("另一个任务正在运行中，请先取消或等待完成。")
-        return
-
-    interface = LarkInterface(client, user_id)
-    active_tasks[user_id] = interface
-
-    try:
-        runner = TaskRunner(
-            interface=interface,
-            model_config=config.model_config,
-            agent_config=config.agent_config
-        )
-
-        await interface.send_message(f"开始执行任务: {text}")
-        result = await runner.run_task(text)
-        logger.info(f"Task completed for user {user_id}: {result}")
-
-    except Exception as e:
-        logger.error(f"Task error for user {user_id}: {e}", exc_info=True)
-        await interface.send_message(f"错误: {str(e)}")
-
-    finally:
         if user_id in active_tasks:
-            del active_tasks[user_id]
+            interface = LarkInterface(client, user_id)
+            await interface.send_message("另一个任务正在运行中，请先取消或等待完成。")
+            return
+
+        interface = LarkInterface(client, user_id)
+        active_tasks[user_id] = interface
+
+        try:
+            runner = TaskRunner(
+                interface=interface,
+                model_config=config.model_config,
+                agent_config=config.agent_config
+            )
+
+            await interface.send_message(f"开始执行任务: {text}")
+            result = await runner.run_task(text)
+            logger.info(f"Task completed for user {user_id}: {result}")
+
+        except Exception as e:
+            logger.error(f"Task error for user {user_id}: {e}", exc_info=True)
+            await interface.send_message(f"错误: {str(e)}")
+
+        finally:
+            if user_id in active_tasks:
+                del active_tasks[user_id]
+
+    except Exception as e:
+        logger.error(f"Error handling message event: {e}", exc_info=True)
 
 
-async def handle_card_action_event(event: dict):
-    action = event.get("action", {})
-    value_str = action.get("value", "{}")
-
+async def handle_card_action_event(event: CardActionEvent):
     try:
-        value = json.loads(value_str)
-    except json.JSONDecodeError:
-        logger.error(f"Invalid action value JSON: {value_str}")
-        return
+        action = event.event.action
+        value_str = action.value
 
-    msg_id = value.get("msg_id")
-    action_type = value.get("action")
+        try:
+            value = json.loads(value_str)
+        except json.JSONDecodeError:
+            logger.error(f"Invalid action value JSON: {value_str}")
+            return
 
-    user_id = event.get("operator", {}).get("open_id")
+        msg_id = value.get("msg_id")
+        action_type = value.get("action")
 
-    if user_id not in active_tasks:
-        logger.warning(f"No active task for user {user_id} when handling card action")
-        return
+        user_id = event.event.operator.open_id
 
-    interface = active_tasks[user_id]
+        if user_id not in active_tasks:
+            logger.warning(f"No active task for user {user_id} when handling card action")
+            return
 
-    if action_type == "confirm":
-        interface.handle_card_action(msg_id, action_type, confirmed=True)
-    elif action_type == "cancel":
-        interface.handle_card_action(msg_id, action_type, confirmed=False)
-    elif action_type == "takeover_done":
-        interface.handle_card_action(msg_id, action_type, confirmed=True)
+        interface = active_tasks[user_id]
+
+        if action_type == "confirm":
+            interface.handle_card_action(msg_id, action_type, confirmed=True)
+        elif action_type == "cancel":
+            interface.handle_card_action(msg_id, action_type, confirmed=False)
+        elif action_type == "takeover_done":
+            interface.handle_card_action(msg_id, action_type, confirmed=True)
+
+    except Exception as e:
+        logger.error(f"Error handling card action event: {e}", exc_info=True)
 
 
 def main():
-    import uvicorn
+    from lark_oapi.event import EventDispatcher
 
-    logger.info("Starting Lark bot server...")
+    logger.info("Starting Lark bot with long connection...")
     logger.info(f"App ID: {config.lark_app_id}")
     logger.info(f"Allowed users: {config.lark_allowed_users}")
-    logger.info(f"Webhook URL: http://{config.lark_webhook_host}:{config.lark_webhook_port}/webhook/event")
 
-    uvicorn.run(
-        app,
-        host=config.lark_webhook_host,
-        port=config.lark_webhook_port,
-        log_level="info"
-    )
+    event_dispatcher = EventDispatcher.builder(
+        verification_token=config.lark_verification_token,
+        encrypt_key=""
+    ).build()
+
+    event_dispatcher.register("im.message.receive_v1", MessageHandler())
+    event_dispatcher.register("card.action.trigger", CardActionHandler())
+
+    logger.info("Starting event listener...")
+
+    client.ws.start(event_dispatcher)
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        logger.info("Bot stopped by user")
+    except Exception as e:
+        logger.error(f"Bot error: {e}", exc_info=True)

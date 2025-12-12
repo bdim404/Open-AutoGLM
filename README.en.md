@@ -32,8 +32,6 @@ lark:
   verification_token: "xxx"
   allowed_users:
     - "ou_xxx"
-  webhook_host: "0.0.0.0"
-  webhook_port: 8080
 ```
 
 **Model Configuration:**
@@ -57,9 +55,10 @@ python bot_main.py
 
 **Lark Bot:**
 ```bash
-uvicorn lark_main:app --host 0.0.0.0 --port 8080
+python lark_main.py
 ```
 
+> Lark uses long connection mode, no need for public IP or ngrok, automatically connects to Lark servers after startup
 > Both bots can run simultaneously without conflicts
 
 ## Usage
@@ -88,31 +87,33 @@ Send tasks directly to the bot in Lark:
 
 ## Lark App Setup
 
+### 1. Create App
 1. Visit [Lark Open Platform](https://open.larksuite.com/app)
 2. Create a custom app
 3. Get App ID and App Secret
-4. Enable bot capabilities
-5. Add permissions:
-   - `im:message` - Receive messages
-   - `im:message:send_as_bot` - Send messages
-   - `im:resource` - Upload images
-6. Configure event subscription:
-   - Request URL: `https://your-domain/webhook/event`
-   - Subscribe to event: `im.message.receive_v1`
-7. Publish the app and add test users
-8. Get user Open ID and add to `allowed_users` list
+4. Get Verification Token (in Event Subscription page)
 
-### Local Testing (with ngrok)
-```bash
-# Install ngrok
-brew install ngrok
+### 2. Configure Permissions
+Add the following permissions:
+- `im:message` - Receive messages
+- `im:message:send_as_bot` - Send messages
+- `im:resource` - Upload images
 
-# Start the service
-uvicorn lark_main:app --host 0.0.0.0 --port 8080
+### 3. Subscribe Events
+In "Event Subscription" page, subscribe to:
+- `im.message.receive_v1` - Receive messages
+- `card.action.trigger` - Message card interactions
 
-# In another terminal, start ngrok
-ngrok http 8080
+> ⚠️ Using long connection mode, **no need to configure request URL**, just subscribe to events
 
-# Configure the HTTPS URL provided by ngrok to Lark event subscription
-# Example: https://xxxx.ngrok.io/webhook/event
-```
+### 4. Publish App
+1. Click "Create Version" and publish
+2. Add test users or make it available to all
+3. Search and add your bot in Lark
+
+### 5. Get User Open ID
+Two ways to get it:
+1. Send a message to the bot and check logs
+2. View in "Event Subscription > Event Logs" on Lark Open Platform
+
+Add the obtained Open ID to `allowed_users` list in `config/bot_config.yaml`

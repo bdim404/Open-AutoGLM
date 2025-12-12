@@ -32,8 +32,6 @@ lark:
   verification_token: "xxx"
   allowed_users:
     - "ou_xxx"
-  webhook_host: "0.0.0.0"
-  webhook_port: 8080
 ```
 
 **模型配置：**
@@ -57,9 +55,10 @@ python bot_main.py
 
 **飞书 Bot：**
 ```bash
-uvicorn lark_main:app --host 0.0.0.0 --port 8080
+python lark_main.py
 ```
 
+> 飞书使用长连接方式，不需要公网 IP 或 ngrok，启动后自动连接到飞书服务器
 > 两个 Bot 可以同时运行，互不影响
 
 ## 使用
@@ -86,33 +85,35 @@ uvicorn lark_main:app --host 0.0.0.0 --port 8080
 - 🎯 **交互确认**：关键操作前请求用户确认
 - 🖥️ **CLI 模式**：保留命令行模式（`python main.py`）
 
-## 飞书应用创建
+## 飞书应用配置
 
+### 1. 创建应用
 1. 访问 [飞书开放平台](https://open.feishu.cn/app)
 2. 创建企业自建应用
 3. 获取 App ID 和 App Secret
-4. 开启机器人能力
-5. 添加权限：
-   - `im:message` - 接收消息
-   - `im:message:send_as_bot` - 发送消息
-   - `im:resource` - 上传图片
-6. 配置事件订阅：
-   - 请求地址：`https://your-domain/webhook/event`
-   - 订阅事件：`im.message.receive_v1`
-7. 发布应用并添加测试用户
-8. 获取用户 Open ID 并添加到 `allowed_users` 列表
+4. 获取 Verification Token（事件订阅页面）
 
-### 本地测试（使用 ngrok）
-```bash
-# 安装 ngrok
-brew install ngrok
+### 2. 配置权限
+添加以下权限：
+- `im:message` - 接收消息
+- `im:message:send_as_bot` - 发送消息
+- `im:resource` - 上传图片
 
-# 启动服务
-uvicorn lark_main:app --host 0.0.0.0 --port 8080
+### 3. 订阅事件
+在"事件订阅"页面，订阅以下事件：
+- `im.message.receive_v1` - 接收消息
+- `card.action.trigger` - 消息卡片交互
 
-# 在另一个终端启动 ngrok
-ngrok http 8080
+> ⚠️ 使用长连接方式，**无需配置请求网址**，只需订阅事件即可
 
-# 将 ngrok 提供的 HTTPS 地址配置到飞书事件订阅
-# 例如：https://xxxx.ngrok.io/webhook/event
-```
+### 4. 发布应用
+1. 点击"创建版本"并发布
+2. 添加测试用户或全员可用
+3. 在飞书中搜索并添加你的机器人
+
+### 5. 获取用户 Open ID
+有两种方式获取：
+1. 给机器人发送消息后，在日志中查看
+2. 在飞书开放平台的"事件订阅 > 事件日志"中查看
+
+将获取的 Open ID 添加到 `config/bot_config.yaml` 的 `allowed_users` 列表
