@@ -23,7 +23,6 @@ client = lark.Client.builder() \
     .build()
 
 active_tasks: Dict[str, LarkInterface] = {}
-event_loop = asyncio.new_event_loop()
 
 
 def check_lark_auth(user_id: str) -> bool:
@@ -31,8 +30,8 @@ def check_lark_auth(user_id: str) -> bool:
 
 
 def do_p2_im_message_receive_v1(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
-    asyncio.set_event_loop(event_loop)
-    event_loop.run_until_complete(handle_message_event(data))
+    logger.info(f"do_p2_im_message_receive_v1 called with data: {data}")
+    asyncio.create_task(handle_message_event(data))
 
 
 async def handle_message_event(data: lark.im.v1.P2ImMessageReceiveV1):
@@ -95,8 +94,7 @@ async def handle_message_event(data: lark.im.v1.P2ImMessageReceiveV1):
 
 
 def do_card_action_event(data: lark.CustomizedEvent) -> None:
-    asyncio.set_event_loop(event_loop)
-    event_loop.run_until_complete(handle_card_action_event(data))
+    asyncio.create_task(handle_card_action_event(data))
 
 
 async def handle_card_action_event(data: lark.CustomizedEvent):
