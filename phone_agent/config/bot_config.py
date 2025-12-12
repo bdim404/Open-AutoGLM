@@ -45,3 +45,27 @@ class BotConfig:
             verbose=self.config['agent'].get('verbose', True),
             lang=self.config['agent'].get('lang', 'cn')
         )
+
+    @property
+    def lark_app_id(self) -> str:
+        return self.config.get('lark', {}).get('app_id', '')
+
+    @property
+    def lark_app_secret(self) -> str:
+        return self.config.get('lark', {}).get('app_secret', '')
+
+    @property
+    def lark_verification_token(self) -> str:
+        return self.config.get('lark', {}).get('verification_token', '')
+
+    @property
+    def lark_allowed_users(self) -> list:
+        return self.config.get('lark', {}).get('allowed_users', [])
+
+    @property
+    def lark_webhook_host(self) -> str:
+        return self.config.get('lark', {}).get('webhook_host', '0.0.0.0')
+
+    @property
+    def lark_webhook_port(self) -> int:
+        return self.config.get('lark', {}).get('webhook_port', 8080)

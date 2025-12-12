@@ -1,0 +1,23 @@
+telegram:
+  token: "YOUR_BOT_TOKEN_HERE"
+  allowed_user_id: 123456789
+
+lark:
+  app_id: "cli_xxxxxxxxxx"
+  app_secret: "your_app_secret_here"
+  verification_token: "your_verification_token_here"
+  allowed_users:
+    - "ou_xxxxxxxxxx"
+  webhook_host: "0.0.0.0"
+  webhook_port: 8080
+
+model:
+  base_url: "https://api-inference.modelscope.cn/v1"
+  model_name: "ZhipuAI/AutoGLM-Phone-9B"
+  api_key: "your_api_key_here"
+
+agent:
+  max_steps: 100
+  device_id: null
+  verbose: true
+  lang: "cn"
