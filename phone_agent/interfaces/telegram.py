@@ -14,7 +14,6 @@ class TelegramInterface(BaseInterface):
         self.context = context
         self.chat_id = update.effective_chat.id
         self._cancelled = False
-        self._progress_message_id: Optional[int] = None
         self._confirmation_event: Optional[asyncio.Event] = None
         self._confirmation_result: Optional[bool] = None
 
@@ -44,22 +43,13 @@ class TelegramInterface(BaseInterface):
         )
 
         try:
-            if self._progress_message_id:
-                await self.context.bot.edit_message_text(
-                    chat_id=self.chat_id,
-                    message_id=self._progress_message_id,
-                    text=progress_text,
-                    parse_mode='Markdown'
-                )
-            else:
-                msg = await self.context.bot.send_message(
-                    chat_id=self.chat_id,
-                    text=progress_text,
-                    parse_mode='Markdown'
-                )
-                self._progress_message_id = msg.message_id
+            await self.context.bot.send_message(
+                chat_id=self.chat_id,
+                text=progress_text,
+                parse_mode='Markdown'
+            )
         except Exception as e:
-            print(f"Failed to update progress message: {e}")
+            print(f"Failed to send progress message: {e}")
 
         if update.screenshot_path:
             try:
