@@ -5,7 +5,6 @@ telegram:
 lark:
   app_id: "cli_xxxxxxxxxx"
   app_secret: "your_app_secret_here"
-  verification_token: "your_verification_token_here"
   allowed_users:
     - "ou_xxxxxxxxxx"
 
