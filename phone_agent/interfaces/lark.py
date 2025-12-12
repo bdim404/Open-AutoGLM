@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 from typing import Optional, Dict
 from pathlib import Path
 
@@ -12,6 +13,8 @@ from lark_oapi.api.im.v1 import (
 from lark_oapi import Client
 
 from phone_agent.interfaces.base import BaseInterface, ProgressUpdate
+
+logger = logging.getLogger(__name__)
 
 
 class LarkInterface(BaseInterface):
@@ -37,12 +40,14 @@ class LarkInterface(BaseInterface):
 
         response = self.client.im.v1.message.create(request)
         if not response.success():
-            print(f"Failed to send message: {response.msg}")
+            logger.error(f"Failed to send message: {response.msg}")
 
     async def send_image(self, image_path: str, caption: str = "") -> None:
+        logger.info(f"Sending image: {image_path}")
         image_key = await self.upload_image(image_path)
 
         if image_key:
+            logger.info(f"Image uploaded successfully, image_key: {image_key}")
             request = CreateMessageRequest.builder() \
                 .receive_id_type(self.receive_id_type) \
                 .request_body(
@@ -56,12 +61,18 @@ class LarkInterface(BaseInterface):
 
             response = self.client.im.v1.message.create(request)
             if not response.success():
-                print(f"Failed to send image: {response.msg}")
+                logger.error(f"Failed to send image: {response.msg}")
+            else:
+                logger.info("Image sent successfully")
 
             if caption:
                 await self.send_message(caption)
+        else:
+            logger.error("Failed to upload image, image_key is None")
 
     async def send_progress(self, update: ProgressUpdate) -> None:
+        logger.info(f"Sending progress update for step {update.step_num}/{update.total_steps}")
+
         thinking_preview = update.thinking[:200] + "..." if len(update.thinking) > 200 else update.thinking
         action_name = update.action.get('action', 'Unknown')
 
@@ -86,15 +97,11 @@ class LarkInterface(BaseInterface):
 
             response = self.client.im.v1.message.create(request)
             if not response.success():
-                print(f"Failed to send progress card: {response.msg}")
+                logger.error(f"Failed to send progress card: {response.msg}")
+            else:
+                logger.info("Progress card sent successfully")
         except Exception as e:
-            print(f"Failed to send progress message: {e}")
-
-        if update.screenshot_path:
-            try:
-                await self.send_image(update.screenshot_path, f"Step {update.step_num}")
-            except Exception as e:
-                print(f"Failed to send screenshot: {e}")
+            logger.error(f"Failed to send progress message: {e}", exc_info=True)
 
     async def ask_confirmation(self, message: str) -> bool:
         event = asyncio.Event()
@@ -117,7 +124,7 @@ class LarkInterface(BaseInterface):
 
         response = self.client.im.v1.message.create(request)
         if not response.success():
-            print(f"Failed to send confirmation card: {response.msg}")
+            logger.error(f"Failed to send confirmation card: {response.msg}")
             return False
 
         await event.wait()
@@ -148,7 +155,7 @@ class LarkInterface(BaseInterface):
 
         response = self.client.im.v1.message.create(request)
         if not response.success():
-            print(f"Failed to send takeover card: {response.msg}")
+            logger.error(f"Failed to send takeover card: {response.msg}")
             return
 
         await event.wait()
@@ -169,8 +176,10 @@ class LarkInterface(BaseInterface):
 
     async def upload_image(self, image_path: str) -> Optional[str]:
         try:
+            logger.info(f"Uploading image from path: {image_path}")
             with open(image_path, 'rb') as f:
                 image_data = f.read()
+            logger.info(f"Image file size: {len(image_data)} bytes")
 
             request = CreateImageRequest.builder() \
                 .request_body(
@@ -183,12 +192,13 @@ class LarkInterface(BaseInterface):
 
             response = self.client.im.v1.image.create(request)
             if response.success():
+                logger.info(f"Image uploaded successfully: {response.data.image_key}")
                 return response.data.image_key
             else:
-                print(f"Failed to upload image: {response.msg}")
+                logger.error(f"Failed to upload image: {response.msg}")
                 return None
         except Exception as e:
-            print(f"Error uploading image: {e}")
+            logger.error(f"Error uploading image: {e}", exc_info=True)
             return None
 
     def _build_progress_card(self, step_num: int, total_steps: int, thinking: str, action: str) -> dict:
